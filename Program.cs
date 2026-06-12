@@ -57,33 +57,40 @@ async Task HandleClientAsync(TcpClient client)
         int statusCode;
         string contentType;
 
-        if (method == "POST" && path == "/echo")
-        {
-            EchoRequest? parsed = null;
-            try { parsed = JsonSerializer.Deserialize<EchoRequest>(rawBody,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
-            catch (JsonException jsonerror) { Console.WriteLine($"JSON error : {jsonerror}"); }
+        // key : value > 
+        var routes = new Dictionary<(string Method, string Path), Func<string, Task<(int Status, string ContentType, string Body)>>>();
 
-            if (parsed is null)
-            {
-                statusCode = 400; contentType = "text/plain";
-                responseBody = "Invalid JSON body";
-            }
-            else
-            {
-                statusCode = 200; contentType = "application/json";
-                responseBody = JsonSerializer.Serialize(new { recieved = parsed.Message });
-            }
-        }
-        else if (method == "GET" && path == "/hello")
+        routes[("GET", "/hello")] = async body => { return (200, "text/plain", "Hello, bro"); };
+
+        routes[("POST", "/echo")] = async body =>
         {
-            statusCode = 200; contentType = "text/plain";
-            responseBody = "Hello, world!";
+            try
+            {
+                Console.WriteLine(body);
+                var parsed = JsonSerializer.Deserialize<EchoRequest>(body,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (parsed is null)
+                    return (400, "text/plain", "Invalid JSON body");
+
+                string json = JsonSerializer.Serialize(new { received = parsed.Message });
+                return (200, "application/json", json);
+            }
+            catch (JsonException)
+            {
+                return (400, "text/plain", "Invalid JSON body");
+            }
+        };
+
+        if (routes.TryGetValue((method, path), out var handler))
+        {
+            (statusCode, contentType, responseBody) = await handler(rawBody);
         }
         else
         {
-            statusCode = 404; contentType = "text/plain";
-            responseBody = "Not found : (";
+            statusCode = 404;
+            contentType = "text/plain";
+            responseBody = "Not found";
         }
 
         await writer.WriteAsync(
