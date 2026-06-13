@@ -29,6 +29,7 @@ async Task HandleClientAsync(TcpClient client)
         //string version = parts[2];
 
         //parts.ToList().ForEach(i => Console.WriteLine(i.ToString()));
+        Console.WriteLine($"Method={method}, Path={path}");
 
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string? line;
@@ -51,18 +52,57 @@ async Task HandleClientAsync(TcpClient client)
             await reader.ReadBlockAsync(buffer, 0, contentLength);
             rawBody = new string(buffer);
             //Console.WriteLine($"rawBody is : {rawBody}");
+            Console.WriteLine($"Body (raw): {rawBody}");
+            Console.WriteLine($"Body length: {rawBody.Length}, Content-Length header: {headers.GetValueOrDefault("Content-Length")}");
         }
+
+        bool TryMatchRoute(string pattern, string path, out Dictionary<string, string> routeParams)
+        {
+            routeParams = new Dictionary<string, string>();
+
+            string[] patternSegments = pattern.Split('/');
+            string[] pathSegments = path.Split('/');
+
+            if (patternSegments.Length != pathSegments.Length)
+                return false;
+
+            for (int i = 0; i < patternSegments.Length; i++)
+            {
+                string patternSeg = patternSegments[i];
+                string pathSeg = pathSegments[i];
+
+                if (patternSeg.StartsWith('{') && patternSeg.EndsWith('}'))
+                {
+                    // Extract the value > id : value
+                    string paramName = patternSeg[1..^1]; // Strips { }, from index 1 to 1 from the end
+                    routeParams[paramName] = pathSeg; // paramName = key(stripped) : pathSeg = value
+                }
+                else if (patternSeg != pathSeg)
+                {
+
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
 
         string responseBody;
         int statusCode;
         string contentType;
 
-        // key : value > 
-        var routes = new Dictionary<(string Method, string Path), Func<string, Task<(int Status, string ContentType, string Body)>>>();
+        // key : value
+        var routes = new Dictionary<(string Method, string Path), Func<string, Dictionary<string, string>, Task<(int Status, string ContentType, string Body)>>>();
 
-        routes[("GET", "/hello")] = async body => { return (200, "text/plain", "Hello, bro"); };
+        routes[("GET", "/hello")] = async (body, routeParams) => { return (200, "text/plain", "Hello, bro"); };
 
-        routes[("POST", "/echo")] = async body =>
+        routes[("GET", "/users/{id}")] = async (body, routeParams) =>
+        {
+            return (200, "text/plain", $"You asked for user {routeParams["id"]}");
+        };
+
+        routes[("POST", "/echo")] = async (body, routeParams) =>
         {
             try
             {
@@ -82,15 +122,21 @@ async Task HandleClientAsync(TcpClient client)
             }
         };
 
-        if (routes.TryGetValue((method, path), out var handler))
+        var match = routes
+            .Where(r => r.Key.Method == method) // ex, if POST > discard all GET and so on
+            .OrderBy(r => r.Key.Path.Contains('{') ? 1 : 0)
+            .Select(r => (Route: r, Matched: TryMatchRoute(r.Key.Path, path, out var p), Params: p)) // 
+            .FirstOrDefault(r => r.Matched);
+            Console.WriteLine($"Matched: {match.Matched}, Params: {string.Join(", ", match.Params.Select(p => $"{p.Key}={p.Value}"))}"); // foreach var p in match.Params
+
+        if (match.Route.Value is not null)
         {
-            (statusCode, contentType, responseBody) = await handler(rawBody);
+            (statusCode, contentType, responseBody) = await match.Route.Value(rawBody, match.Params);
+            Console.WriteLine($"Responding: {statusCode} {contentType} -> {responseBody}");
         }
         else
         {
-            statusCode = 404;
-            contentType = "text/plain";
-            responseBody = "Not found";
+            (statusCode, contentType, responseBody) = (404, "text/plain", "Not found");
         }
 
         await writer.WriteAsync(
