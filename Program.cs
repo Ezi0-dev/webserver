@@ -76,6 +76,50 @@ routes[("POST", "/users")] = async (body, routeParams) =>
     } catch (JsonException) { return (400, "text/plain", "Invalid JSON body"); }
 };
 
+routes[("PUT", "/users/{id}")] = async (body, routeParams) =>
+{
+  try
+    {
+        if (!int.TryParse(routeParams["id"], out int userId))
+            return (400, "text/plain", "Invalid user id");
+
+        var parsed = JsonSerializer.Deserialize<RegisterRequest>(body, 
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        if (parsed is null) return (400, "text/plain", "Invalid JSON body");
+
+        User? user;
+        lock (usersLock)
+        {
+            user = users.FirstOrDefault(u => u.Id == userId);
+            if (user is null)
+                return (404, "text/plain", "User not found");
+
+            user.Name = parsed.Name;
+            user.Email = parsed.Email;
+        }
+
+        return (200, "application/json", JsonSerializer.Serialize(new { message = $"ID : {user.Id} updated successfully" }));
+    
+    } catch (JsonException) { return (400, "text/plain", "Invalid JSON body"); }
+};
+
+routes[("DELETE", "/users/{id}")] = async (body, routeParams) =>
+{
+    if (!int.TryParse(routeParams["id"], out int userId))
+        return (400, "text/plain", "Invalid user id");
+
+    lock (usersLock)
+    {
+        var user = users.FirstOrDefault(u => u.Id == userId);
+        if (user is null)
+            return (404, "text/plain", "User not found");
+
+        users.Remove(user);
+    }
+
+    return (200, "application/json", $"ID : {userId} successfully removed");
+};
+
 // Server
 var listener = new TcpListener(IPAddress.Any, 8080);
 listener.Start();
