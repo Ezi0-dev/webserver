@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security;
 using System.Text.Json;
+using Microsoft.CSharp.RuntimeBinder;
 
 // Temp storage
 var users = new List<User>();
@@ -175,26 +176,11 @@ async Task HandleClientAsync(TcpClient client)
             Console.WriteLine($"Body length: {rawBody.Length}, Content-Length header: {headers.GetValueOrDefault("Content-Length")}");
         }
 
-        string responseBody;
-        int statusCode;
-        string contentType;
+        // pipeline: ErrorMiddleware → LoggingMiddleware → RunHandler
+        var (statusCode, contentType, responseBody) = await ErrorMiddleware(method, path, rawBody, () =>
+            LoggingMiddleware(method, path, rawBody, () =>
+                RunHandler(method, path, rawBody)));
 
-        var match = routes
-            .Where(r => r.Key.Method == method) // ex, if POST > discard all GET and so on
-            .OrderBy(r => r.Key.Path.Contains('{') ? 1 : 0)
-            .Select(r => (Route: r, Matched: TryMatchRoute(r.Key.Path, path, out var p), Params: p)) // 
-            .FirstOrDefault(r => r.Matched);
-            Console.WriteLine($"Matched: {match.Matched}, Params: {string.Join(", ", match.Params.Select(p => $"{p.Key}={p.Value}"))}"); // foreach var p in match.Params
-
-        if (match.Route.Value is not null)
-        {
-            (statusCode, contentType, responseBody) = await match.Route.Value(rawBody, match.Params);
-            Console.WriteLine($"Responding: {statusCode} {contentType} -> {responseBody}");
-        }
-        else
-        {
-            (statusCode, contentType, responseBody) = (404, "text/plain", "Not found");
-        }
 
         await writer.WriteAsync(
             $"HTTP/1.1 {statusCode} OK\r\n" +
@@ -237,6 +223,57 @@ bool TryMatchRoute(string pattern, string path, out Dictionary<string, string> r
     }
 
     return true;
+}
+
+async Task<(int, string, string)> LoggingMiddleware(
+    string method,
+    string path,
+    string body,
+    Func<Task<(int, string, string)>> next)
+{
+    Console.WriteLine($"→ {method} {path}");
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+    var (status, contentType, responseBody) = await next(); // run the rest of the pipeline
+
+    stopwatch.Stop();
+    Console.WriteLine($"← {status} ({stopwatch.ElapsedMilliseconds}ms)");
+
+    return (status, contentType, responseBody);
+}
+
+async Task<(int, string, string)> ErrorMiddleware(
+    string method,
+    string path,
+    string body,
+    Func<Task<(int, string, string)>> next)
+{
+    try
+    {
+        return await next();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Unhandled error on {method} {path}: {ex.Message}");
+        return (500, "application/json", JsonSerializer.Serialize(new { error = "Internal server error" }));
+    }
+}
+
+async Task<(int, string, string)> RunHandler(string method, string path, string body)
+{
+    var match = routes
+    .Where(r => r.Key.Method == method) // ex, if POST > discard all GET and so on
+    .OrderBy(r => r.Key.Path.Contains('{') ? 1 : 0)
+    .Select(r => (Route: r, Matched: TryMatchRoute(r.Key.Path, path, out var p), Params: p)) // 
+    .FirstOrDefault(r => r.Matched);
+    Console.WriteLine($"Matched: {match.Matched}, Params: {string.Join(", ", match.Params.Select(p => $"{p.Key}={p.Value}"))}"); // foreach var p in match.Params
+
+    if (match.Route.Value is not null)
+    {
+        var (status, contentType, responseBody) = await match.Route.Value(body, match.Params);
+        return (status, contentType, responseBody);
+    }
+    return (404, "text/plain", "Not found");
 }
 
 // Data
