@@ -1,9 +1,7 @@
 ﻿using System.Data;
 using System.Net;
 using System.Net.Sockets;
-using System.Security;
 using System.Text.Json;
-using Microsoft.CSharp.RuntimeBinder;
 
 // Temp storage
 var users = new List<User>();
@@ -122,6 +120,7 @@ routes[("DELETE", "/users/{id}")] = async (body, routeParams) =>
 };
 
 // Server
+
 var listener = new TcpListener(IPAddress.Any, 8080);
 listener.Start();
 Console.WriteLine("Listening on http://localhost:8080");
@@ -146,10 +145,6 @@ async Task HandleClientAsync(TcpClient client)
         string[] parts = requestLine.Split(' '); // Splits it at whitespace
         string method = parts[0];
         string path = parts[1];
-        //string version = parts[2];
-
-        //parts.ToList().ForEach(i => Console.WriteLine(i.ToString()));
-        Console.WriteLine($"Method={method}, Path={path}");
 
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string? line;
@@ -171,9 +166,6 @@ async Task HandleClientAsync(TcpClient client)
             char[] buffer = new char[contentLength];
             await reader.ReadBlockAsync(buffer, 0, contentLength);
             rawBody = new string(buffer);
-            //Console.WriteLine($"rawBody is : {rawBody}");
-            Console.WriteLine($"Body (raw): {rawBody}");
-            Console.WriteLine($"Body length: {rawBody.Length}, Content-Length header: {headers.GetValueOrDefault("Content-Length")}");
         }
 
         // pipeline: ErrorMiddleware → LoggingMiddleware → RunHandler
@@ -225,6 +217,7 @@ bool TryMatchRoute(string pattern, string path, out Dictionary<string, string> r
     return true;
 }
 
+// Middleware
 async Task<(int, string, string)> LoggingMiddleware(
     string method,
     string path,
