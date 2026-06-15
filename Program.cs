@@ -8,7 +8,7 @@ using Npgsql;
 var db =
     "Host=localhost;Port=5432;Database=webserver;Username=postgres;Password=password";
 var dataSource = NpgsqlDataSource.Create(db);
-var userRepo = new userRepo(dataSource);
+var UserRepository = new UserRepository(dataSource);
 
 // Temp storage
 var users = new List<User>();
@@ -36,12 +36,9 @@ routes[("POST", "/echo")] = async (body, routeParams) =>
 
 routes[("GET", "/users")] = async (body, routeParams) =>
 {
-    List<User> snapshot;
-    lock (usersLock)
-    {
-        snapshot = users.ToList();
-    }
-    return (200, "application/json", JsonSerializer.Serialize(snapshot));
+    var users = await UserRepository.GetAllUsers();
+
+    return (200, "application/json", JsonSerializer.Serialize(users));
 };
 
 routes[("GET", "/users/{id}")] = async (body, routeParams) =>
@@ -49,7 +46,7 @@ routes[("GET", "/users/{id}")] = async (body, routeParams) =>
     if (!int.TryParse(routeParams["id"], out int id))
         return (400, "text/plain", "Invalid user id");
 
-    var found = await userRepo.GetUserById(id);
+    var found = await UserRepository.GetUserById(id);
 
     if (found is null)
         return (404, "text/plain", "User not found");
@@ -284,35 +281,54 @@ public class User
 };
 
 // DB interaction with users table
-public class userRepo
+public class UserRepository
 {
     private readonly NpgsqlDataSource _dataSource;
 
-    public userRepo(NpgsqlDataSource dataSource)
+    public UserRepository(NpgsqlDataSource dataSource)
     {
         _dataSource = dataSource;
     }
 
     public async Task<User?> GetUserById(int id)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync();
-
-        await using var cmd = new NpgsqlCommand(
-            "SELECT id, name, email FROM users WHERE id = @id",
-            conn);
+        await using var cmd = _dataSource.CreateCommand(
+            "SELECT id, name, email FROM users WHERE id = @id");
         
-        cmd.Parameters.AddWithValue("id", id);
+        cmd.Parameters.AddWithValue("id", id); // To prevent SQL-Injection
 
         await using var reader = await cmd.ExecuteReaderAsync();
 
-        if (!await reader.ReadAsync())
-            return null;
+        if (!await reader.ReadAsync()) return null;
 
         return new User
         {
-            Id = reader.GetInt32(0),
-            Name = reader.GetString(1),
-            Email = reader.GetString(2)
+            Id = reader.GetInt32(reader.GetOrdinal("id")),
+            Name = reader.GetString(reader.GetOrdinal("name")),
+            Email = reader.GetString(reader.GetOrdinal("email"))
         };
+    }
+
+    public async Task<List<User>> GetAllUsers()
+    {
+        var users = new List<User>();
+
+        await using var cmd = _dataSource.CreateCommand("SELECT * FROM users");
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+        {
+            var user = new User
+            {
+                Id = reader.GetInt32(reader.GetOrdinal("id")),
+                Name = reader.GetString(reader.GetOrdinal("name")),
+                Email = reader.GetString(reader.GetOrdinal("email"))
+            };
+
+            users.Add(user);
+        }
+
+        return users;
     }
 }
