@@ -1,4 +1,5 @@
-﻿using System.Data;
+﻿using System.ComponentModel.DataAnnotations;
+using System.Data;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -61,18 +62,14 @@ routes[("POST", "/users")] = async (body, routeParams) =>
         var parsed = JsonSerializer.Deserialize<RegisterRequest>(body, 
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         if (parsed is null) return (400, "text/plain", "Invalid JSON body");
-
-        lock (usersLock)
-        {
-            if (users.Any(u => u.Email == parsed.Email) || users.Any(u => u.Name == parsed.Name))
-                return (400, "text/plain", "Name or Email already in use!");
-
-            users.Add(new User{ Id = nextId, Name = parsed.Name, Email = parsed.Email});
-            nextId++;
-        }
-        return (201, "application/json", $"User {parsed.Name} registered");
         
-    } catch (JsonException) { return (400, "text/plain", "Invalid JSON body"); }
+        var user = await UserRepository.CreateUser(parsed.Name, parsed.Email);
+
+        return (201, "application/json", $"User ID : {user} registered");
+        
+    } 
+    catch (JsonException) { return (400, "text/plain", "Invalid JSON body"); }
+    catch (DuplicateEmailException) { return (409, "text/plain", "Email already in use"); }
 };
 
 routes[("PUT", "/users/{id}")] = async (body, routeParams) =>
@@ -330,5 +327,24 @@ public class UserRepository
         }
 
         return users;
+    }
+
+    public async Task<int> CreateUser(string name, string email)
+    {
+        await using var cmd = _dataSource.CreateCommand(
+            "INSERT INTO users (name, email) VALUES (@name, @email) RETURNING id");
+        
+        cmd.Parameters.AddWithValue("@name",  name); // To prevent SQL-Injection
+        cmd.Parameters.AddWithValue("@email", email); 
+
+        try
+        {
+            await using var reader = await cmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+                throw new Exception("Insert failed, no row returned");
+
+            return reader.GetInt32(0); // ID
+        }
+        catch (PostgresException ex) when (ex.SqlState == "23505") { throw new DuplicateEmailException(); }
     }
 }
