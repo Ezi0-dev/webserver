@@ -2,6 +2,13 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
+using Npgsql;
+
+// DB
+var db =
+    "Host=localhost;Port=5432;Database=webserver;Username=postgres;Password=password";
+var dataSource = NpgsqlDataSource.Create(db);
+var userRepo = new userRepo(dataSource);
 
 // Temp storage
 var users = new List<User>();
@@ -42,11 +49,7 @@ routes[("GET", "/users/{id}")] = async (body, routeParams) =>
     if (!int.TryParse(routeParams["id"], out int id))
         return (400, "text/plain", "Invalid user id");
 
-    User? found;
-    lock (usersLock)
-    {
-        found = users.FirstOrDefault(u => u.Id == id);
-    }
+    var found = await userRepo.GetUserById(id);
 
     if (found is null)
         return (404, "text/plain", "User not found");
@@ -259,7 +262,7 @@ async Task<(int, string, string)> RunHandler(string method, string path, string 
     .OrderBy(r => r.Key.Path.Contains('{') ? 1 : 0)
     .Select(r => (Route: r, Matched: TryMatchRoute(r.Key.Path, path, out var p), Params: p)) // 
     .FirstOrDefault(r => r.Matched);
-    Console.WriteLine($"Matched: {match.Matched}, Params: {string.Join(", ", match.Params.Select(p => $"{p.Key}={p.Value}"))}"); // foreach var p in match.Params
+    //Console.WriteLine($"Matched: {match.Matched}, Params: {string.Join(", ", match.Params.Select(p => $"{p.Key}={p.Value}"))}"); // foreach var p in match.Params
 
     if (match.Route.Value is not null)
     {
@@ -273,9 +276,43 @@ async Task<(int, string, string)> RunHandler(string method, string path, string 
 record EchoRequest(string Message);
 record RegisterRequest(string Name, string Email);
 
-class User
+public class User
 {
     public int Id { get; set; }
     public string Name { get; set; } = "";
     public string Email { get; set; } = "";
 };
+
+// DB interaction with users table
+public class userRepo
+{
+    private readonly NpgsqlDataSource _dataSource;
+
+    public userRepo(NpgsqlDataSource dataSource)
+    {
+        _dataSource = dataSource;
+    }
+
+    public async Task<User?> GetUserById(int id)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync();
+
+        await using var cmd = new NpgsqlCommand(
+            "SELECT id, name, email FROM users WHERE id = @id",
+            conn);
+        
+        cmd.Parameters.AddWithValue("id", id);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+
+        if (!await reader.ReadAsync())
+            return null;
+
+        return new User
+        {
+            Id = reader.GetInt32(0),
+            Name = reader.GetString(1),
+            Email = reader.GetString(2)
+        };
+    }
+}
