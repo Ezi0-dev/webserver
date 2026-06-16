@@ -69,7 +69,7 @@ routes[("POST", "/users")] = async (body, routeParams) =>
         
     } 
     catch (JsonException) { return (400, "text/plain", "Invalid JSON body"); }
-    catch (DuplicateEmailException) { return (409, "text/plain", "Email already in use"); }
+    catch (PostgresException ex) when (ex.SqlState == "23505") { return (409, "text/plain", "Email already in use"); }
 };
 
 routes[("PUT", "/users/{id}")] = async (body, routeParams) =>
@@ -83,18 +83,9 @@ routes[("PUT", "/users/{id}")] = async (body, routeParams) =>
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         if (parsed is null) return (400, "text/plain", "Invalid JSON body");
 
-        User? user;
-        lock (usersLock)
-        {
-            user = users.FirstOrDefault(u => u.Id == userId);
-            if (user is null)
-                return (404, "text/plain", "User not found");
+        var user = await UserRepository.UpdateUser(userId, parsed.Name, parsed.Email);
 
-            user.Name = parsed.Name;
-            user.Email = parsed.Email;
-        }
-
-        return (200, "application/json", JsonSerializer.Serialize(new { message = $"ID : {user.Id} updated successfully" }));
+        return (200, "application/json", JsonSerializer.Serialize(new { id = user }));
     
     } catch (JsonException) { return (400, "text/plain", "Invalid JSON body"); }
 };
@@ -337,14 +328,26 @@ public class UserRepository
         cmd.Parameters.AddWithValue("@name",  name); // To prevent SQL-Injection
         cmd.Parameters.AddWithValue("@email", email); 
 
-        try
-        {
-            await using var reader = await cmd.ExecuteReaderAsync();
-            if (!await reader.ReadAsync())
-                throw new Exception("Insert failed, no row returned");
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+            throw new Exception("Insert failed, no row returned");
 
-            return reader.GetInt32(0); // ID
-        }
-        catch (PostgresException ex) when (ex.SqlState == "23505") { throw new DuplicateEmailException(); }
+        return reader.GetInt32(0); // ID
+    }
+
+    public async Task<int> UpdateUser(int id, string name, string email)
+    {
+        await using var cmd = _dataSource.CreateCommand(
+            "UPDATE users SET name = @name, email = @email WHERE id = @id RETURNING id");
+        
+        cmd.Parameters.AddWithValue("@name",  name);
+        cmd.Parameters.AddWithValue("@email", email); 
+        cmd.Parameters.AddWithValue("@id", id);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+            throw new Exception("User not found");
+
+        return reader.GetInt32(0); // ID
     }
 }
