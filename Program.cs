@@ -95,16 +95,9 @@ routes[("DELETE", "/users/{id}")] = async (body, routeParams) =>
     if (!int.TryParse(routeParams["id"], out int userId))
         return (400, "text/plain", "Invalid user id");
 
-    lock (usersLock)
-    {
-        var user = users.FirstOrDefault(u => u.Id == userId);
-        if (user is null)
-            return (404, "text/plain", "User not found");
+    var user = await UserRepository.DeleteUser(userId);
 
-        users.Remove(user);
-    }
-
-    return (200, "application/json", $"ID : {userId} successfully removed");
+    return (200, "application/json", JsonSerializer.Serialize(new { message = $"User ID : {user} Successfully removed!" }));
 };
 
 // Server
@@ -349,5 +342,19 @@ public class UserRepository
             throw new Exception("User not found");
 
         return reader.GetInt32(0); // ID
+    }
+
+    public async Task<int> DeleteUser(int id)
+    {
+        await using var cmd = _dataSource.CreateCommand(
+            "DELETE FROM users WHERE id = @id RETURNING id");
+        
+        cmd.Parameters.AddWithValue("@id", id);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+            throw new Exception("User not found");
+
+        return reader.GetInt32(0);
     }
 }
