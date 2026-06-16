@@ -11,11 +11,6 @@ var db =
 var dataSource = NpgsqlDataSource.Create(db);
 var UserRepository = new UserRepository(dataSource);
 
-// Temp storage
-var users = new List<User>();
-var nextId = 1;
-var usersLock = new object();
-
 // Routes => (status, type, body)
 var routes = new Dictionary<(string Method, string Path), 
     Func<string, Dictionary<string, string>, Task<(int Status, string ContentType, string Body)>>>();
