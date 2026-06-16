@@ -87,12 +87,16 @@ routes[("PUT", "/users/{id}")] = async (body, routeParams) =>
 
 routes[("DELETE", "/users/{id}")] = async (body, routeParams) =>
 {
-    if (!int.TryParse(routeParams["id"], out int userId))
+    try
+    {
+        if (!int.TryParse(routeParams["id"], out int userId))
         return (400, "text/plain", "Invalid user id");
 
-    var user = await UserRepository.DeleteUser(userId);
+        var user = await UserRepository.DeleteUser(userId);
 
-    return (200, "application/json", JsonSerializer.Serialize(new { message = $"User ID : {user} Successfully removed!" }));
+        return (200, "application/json", JsonSerializer.Serialize(new { message = $"User ID : {user} Successfully removed!" }));
+    }
+    catch (Exception ex) when (ex.Message == "User not found") { return (404, "text/plain", "User not found"); }
 };
 
 // Server
