@@ -207,7 +207,7 @@ async Task<(int, string, string)> LoggingMiddleware(
     Console.WriteLine($"→ {method} {path}");
     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-    var (status, contentType, responseBody) = await next(); // run the rest of the pipeline
+    var (status, contentType, responseBody) = await next(); // Run the handler > awaits result
 
     stopwatch.Stop();
     Console.WriteLine($"← {status} ({stopwatch.ElapsedMilliseconds}ms)");
@@ -223,7 +223,7 @@ async Task<(int, string, string)> ErrorMiddleware(
 {
     try
     {
-        return await next();
+        return await next(); // Wraps request in try/catch
     }
     catch (Exception ex)
     {
